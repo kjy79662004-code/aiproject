@@ -1,25 +1,49 @@
 
+import os
+import math
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import koreanize_matplotlib
-import math
+import matplotlib.font_manager as fm
+import matplotlib as mpl
 
 # --------------------------------
 # 1. 페이지 설정
 # --------------------------------
 
 st.set_page_config(
-    page_title="서울시 인구 통계 그래프",
+    page_title="서울시 연령별 인구 통계",
     page_icon="📊",
     layout="wide"
 )
 
-st.title("📊 서울시 연령별 인구 통계")
-st.write("행정구역, 성별, 연도를 선택하여 연령별 인구를 확인할 수 있습니다.")
+# --------------------------------
+# 2. 한글 폰트 설정
+# --------------------------------
+
+font_path = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
+
+if os.path.exists(font_path):
+    font_name = fm.FontProperties(
+        fname=font_path
+    ).get_name()
+
+    mpl.rcParams["font.family"] = font_name
+
+mpl.rcParams["axes.unicode_minus"] = False
 
 # --------------------------------
-# 2. 데이터 불러오기
+# 3. 제목
+# --------------------------------
+
+st.title("📊 서울시 연령별 인구 통계")
+st.write(
+    "행정구역, 성별, 연도를 선택하여 "
+    "연령별 인구수를 확인할 수 있습니다."
+)
+
+# --------------------------------
+# 4. CSV 데이터 불러오기
 # --------------------------------
 
 @st.cache_data
@@ -30,31 +54,44 @@ def load_data():
         encoding="cp949"
     )
 
+    df.columns = df.columns.str.strip()
+
     # 행정구역 이름 정리
     df["행정구역"] = (
         df["행정구역"]
         .astype(str)
-        .str.replace(r"\s*\(\d+\)\s*$", "", regex=True)
+        .str.replace(
+            r"\s*\(\d+\)\s*$",
+            "",
+            regex=True
+        )
         .str.strip()
     )
 
-    # 인구수 쉼표 제거 및 숫자 변환
+    # 인구수 쉼표 제거
     for col in df.columns[1:]:
         df[col] = pd.to_numeric(
-            df[col].astype(str).str.replace(",", "", regex=False),
+            df[col]
+            .astype(str)
+            .str.replace(",", "", regex=False),
             errors="coerce"
         )
 
     return df
 
 
-df = load_data()
+try:
+    df = load_data()
+
+except Exception as e:
+    st.error(f"데이터를 불러오지 못했습니다: {e}")
+    st.stop()
 
 # --------------------------------
-# 3. 선택 항목 설정
+# 5. 선택창 만들기
 # --------------------------------
 
-st.subheader("🔎 검색 조건 선택")
+st.subheader("🔎 검색 조건")
 
 col1, col2, col3 = st.columns(3)
 
@@ -77,7 +114,7 @@ with col3:
     )
 
 # --------------------------------
-# 4. 연령별 데이터 추출
+# 6. 선택한 데이터 추출
 # --------------------------------
 
 age_columns = [
@@ -94,18 +131,16 @@ age_columns = [
     "100세 이상"
 ]
 
-# 선택한 행정구역 검색
-selected_data = df[
+selected = df[
     df["행정구역"] == region
 ]
 
-if selected_data.empty:
-    st.error("선택한 행정구역의 데이터를 찾을 수 없습니다.")
+if selected.empty:
+    st.error("해당 행정구역을 찾을 수 없습니다.")
     st.stop()
 
-selected_data = selected_data.iloc[0]
+selected = selected.iloc[0]
 
-# 연령별 인구수 가져오기
 population = []
 
 for age in age_columns:
@@ -113,26 +148,24 @@ for age in age_columns:
     column_name = f"{year}년_{gender}_{age}"
 
     if column_name not in df.columns:
-        st.error(f"데이터 열을 찾을 수 없습니다: {column_name}")
+        st.error(
+            f"데이터 열을 찾을 수 없습니다: {column_name}"
+        )
         st.stop()
 
-    value = selected_data[column_name]
+    population.append(selected[column_name])
 
-    population.append(value)
-
-# 데이터프레임 생성
 chart_data = pd.DataFrame({
     "나이": age_columns,
     "인구수": population
 })
 
-# 결측치 확인
 if chart_data["인구수"].isna().any():
     st.error("인구 데이터에 비어 있는 값이 있습니다.")
     st.stop()
 
 # --------------------------------
-# 5. 선택 정보 표시
+# 7. 선택 정보 출력
 # --------------------------------
 
 st.divider()
@@ -142,24 +175,29 @@ st.subheader(
 )
 
 st.caption(
-    "연령별 인구수는 10세 단위로 구분됩니다."
+    "연령대별 인구수를 10세 단위로 나타냅니다."
 )
 
 # --------------------------------
-# 6. 꺾은선 그래프 만들기
+# 8. 그래프 데이터 변환
+# --------------------------------
+
+# 천 명 단위로 변환
+population_thousand = [
+    value / 1000
+    for value in population
+]
+
+# --------------------------------
+# 9. 꺾은선 그래프
 # --------------------------------
 
 fig, ax = plt.subplots(figsize=(13, 6))
 
-# 눈이 편안한 차분한 청록색
+# 차분한 청록색
 line_color = "#719E99"
+marker_color = "#A8C5BF"
 
-# 인구수 천 명 단위로 변환
-population_thousand = [
-    value / 1000 for value in population
-]
-
-# 꺾은선 그래프
 ax.plot(
     range(len(age_columns)),
     population_thousand,
@@ -167,17 +205,18 @@ ax.plot(
     linewidth=2.5,
     marker="o",
     markersize=7,
-    markerfacecolor="#A8C5BF",
+    markerfacecolor=marker_color,
     markeredgecolor=line_color
 )
 
-# 제목과 축 이름
+# 그래프 제목
 ax.set_title(
     f"{region} {gender} {year}년 연령별 인구",
     fontsize=17,
     pad=20
 )
 
+# 축 제목
 ax.set_xlabel(
     "나이",
     fontsize=12,
@@ -191,18 +230,17 @@ ax.set_ylabel(
 )
 
 # --------------------------------
-# 7. 가로축 설정
+# 10. 가로축 설정
 # --------------------------------
 
 ax.set_xticks(range(len(age_columns)))
 
 ax.set_xticklabels(
     age_columns,
-    rotation=0,
     fontsize=9
 )
 
-# 각 연령대마다 세로 구분선
+# 가로축 구분선
 ax.grid(
     axis="x",
     linestyle=":",
@@ -211,28 +249,24 @@ ax.grid(
 )
 
 # --------------------------------
-# 8. 세로축 설정
+# 11. 세로축 설정
 # --------------------------------
 
 max_population = max(population_thousand)
 
-# 100단위로 최대값 올림
 y_max = max(
     100,
     math.ceil(max_population / 100) * 100
 )
 
-# 100단위 눈금 설정
+ax.set_ylim(0, y_max)
+
+# 100천 명 단위 눈금
 ax.set_yticks(
     range(0, int(y_max) + 1, 100)
 )
 
-ax.set_ylim(
-    0,
-    y_max
-)
-
-# 가로 구분선
+# 세로축 구분선
 ax.grid(
     axis="y",
     linestyle="--",
@@ -241,30 +275,30 @@ ax.grid(
 )
 
 # --------------------------------
-# 9. 그래프 디자인
+# 12. 그래프 디자인
 # --------------------------------
 
-# 배경색
 fig.patch.set_facecolor("#FAFAF8")
 ax.set_facecolor("#FAFAF8")
 
-# 테두리 정리
 ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 
 ax.spines["left"].set_color("#CCCCCC")
 ax.spines["bottom"].set_color("#CCCCCC")
 
-# 여백 조절
 plt.tight_layout()
 
-# Streamlit에 그래프 출력
-st.pyplot(fig, use_container_width=True)
+# 그래프 출력
+st.pyplot(
+    fig,
+    use_container_width=True
+)
 
 plt.close(fig)
 
 # --------------------------------
-# 10. 인구 데이터 표
+# 13. 인구 데이터 표
 # --------------------------------
 
 st.divider()
@@ -273,7 +307,9 @@ st.subheader("📋 연령별 인구 데이터")
 
 display_data = chart_data.copy()
 
-display_data["인구수"] = display_data["인구수"].map(
+display_data["인구수"] = display_data[
+    "인구수"
+].map(
     lambda x: f"{int(x):,}명"
 )
 
@@ -284,6 +320,6 @@ st.dataframe(
 )
 
 st.caption(
-    "자료: population.csv | 인구수는 명 단위이며, "
+    "자료: population.csv | "
     "그래프 세로축은 천 명 단위입니다."
 )
