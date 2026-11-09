@@ -4,9 +4,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import re
 
-# ---------------------------------
+# =====================================
 # 1. 페이지 기본 설정
-# ---------------------------------
+# =====================================
+
 st.set_page_config(
     page_title="월별 기온분석",
     page_icon="🌡️",
@@ -14,19 +15,29 @@ st.set_page_config(
 )
 
 st.title("🌡️ 월별 기온분석")
-st.write("원하는 월을 선택하여 연도별 최고기온과 최저기온을 비교해 보세요.")
+st.write(
+    "원하는 월을 선택하여 1907년부터 2026년까지 "
+    "연도별 최고기온과 최저기온을 비교해 보세요."
+)
 
-# ---------------------------------
+
+# =====================================
 # 2. 데이터 불러오기
-# ---------------------------------
+# =====================================
+
 @st.cache_data
 def load_data():
 
-    # 한글 인코딩 오류 방지
-    encodings = ["cp949", "euc-kr", "utf-8-sig"]
+    encodings = [
+        "cp949",
+        "euc-kr",
+        "utf-8-sig",
+        "utf-8"
+    ]
 
     df = None
 
+    # 한글 인코딩 자동 처리
     for encoding in encodings:
         try:
             df = pd.read_csv(
@@ -34,13 +45,16 @@ def load_data():
                 encoding=encoding
             )
             break
+
         except UnicodeDecodeError:
             continue
 
     if df is None:
-        raise ValueError("CSV 파일의 인코딩을 확인해 주세요.")
+        raise ValueError(
+            "CSV 파일의 인코딩을 확인해 주세요."
+        )
 
-    # 데이터 열 확인
+    # 필요한 열 확인
     required_columns = [
         "일시",
         "최고기온(℃)",
@@ -54,17 +68,19 @@ def load_data():
             )
 
     # 기온 데이터를 숫자로 변환
-    for col in ["최고기온(℃)", "최저기온(℃)"]:
+    for col in [
+        "최고기온(℃)",
+        "최저기온(℃)"
+    ]:
         df[col] = pd.to_numeric(
             df[col],
             errors="coerce"
         )
 
-    # ---------------------------------
+    # =====================================
     # 3. 날짜 데이터 정리
-    # ---------------------------------
+    # =====================================
 
-    # 영문 월을 숫자로 변환
     month_dict = {
         "Jan": 1,
         "Feb": 2,
@@ -98,22 +114,36 @@ def load_data():
         if month is None:
             return pd.Series([None, None])
 
-        # 07~26년을 2007~2026년으로 변환
-        year += 2000
+        # 07~99는 1907~1999년
+        # 00~26은 2000~2026년
+        if year >= 7:
+            year += 1900
+        else:
+            year += 2000
 
         return pd.Series([year, month])
 
+    # 연도와 월 분리
     df[["연도", "월"]] = df["일시"].apply(
         parse_date
     )
 
-    # 날짜가 잘못된 행 제외
+    # 날짜 변환에 실패한 행 제거
     df = df.dropna(
         subset=["연도", "월"]
     )
 
     df["연도"] = df["연도"].astype(int)
     df["월"] = df["월"].astype(int)
+
+    # =====================================
+    # 4. 분석 연도 범위 제한
+    # =====================================
+
+    df = df[
+        (df["연도"] >= 1907) &
+        (df["연도"] <= 2026)
+    ].copy()
 
     return df
 
@@ -123,13 +153,15 @@ try:
     df = load_data()
 
 except Exception as e:
-    st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
+    st.error(
+        f"데이터를 불러오는 중 오류가 발생했습니다: {e}"
+    )
     st.stop()
 
 
-# ---------------------------------
-# 4. 월 선택
-# ---------------------------------
+# =====================================
+# 5. 월 선택 기능
+# =====================================
 
 month_names = {
     1: "1월",
@@ -153,15 +185,15 @@ selected_month = st.selectbox(
 )
 
 
-# ---------------------------------
-# 5. 선택한 월의 데이터 분석
-# ---------------------------------
+# =====================================
+# 6. 선택한 월의 데이터 분석
+# =====================================
 
 filtered_df = df[
     df["월"] == selected_month
 ].copy()
 
-# 동일한 연도와 월의 데이터가 여러 개라면 평균 계산
+# 같은 연도에 여러 기록이 있으면 평균 계산
 result = (
     filtered_df
     .groupby("연도", as_index=False)
@@ -172,97 +204,173 @@ result = (
     .sort_values("연도")
 )
 
-# 결측값 제거
+# 최고기온과 최저기온이 모두 없는 행 제거
 result = result.dropna(
-    subset=["최고기온(℃)", "최저기온(℃)"],
+    subset=[
+        "최고기온(℃)",
+        "최저기온(℃)"
+    ],
     how="all"
 )
 
 
-# ---------------------------------
-# 6. 그래프 만들기
-# ---------------------------------
+# =====================================
+# 7. 그래프 생성
+# =====================================
 
 if result.empty:
 
-    st.warning("선택한 월에 분석할 데이터가 없습니다.")
+    st.warning(
+        "선택한 월에 분석할 데이터가 없습니다."
+    )
 
 else:
 
     fig = go.Figure()
 
+    # ---------------------------------
     # 최고기온 그래프
+    # ---------------------------------
+
     fig.add_trace(
         go.Scatter(
             x=result["연도"],
             y=result["최고기온(℃)"],
+
             mode="lines+markers",
+
             name="최고기온",
+
             line=dict(
-                color="#A50021",
+                color="#B0002A",
                 width=3
             ),
+
             marker=dict(
-                color="#A50021",
-                size=8
+                color="#B0002A",
+                size=7
             ),
-            connectgaps=False
+
+            connectgaps=False,
+
+            hovertemplate=
+            "연도: %{x}년<br>" +
+            "최고기온: %{y:.1f}℃" +
+            "<extra></extra>"
         )
     )
 
+    # ---------------------------------
     # 최저기온 그래프
+    # ---------------------------------
+
     fig.add_trace(
         go.Scatter(
             x=result["연도"],
             y=result["최저기온(℃)"],
+
             mode="lines+markers",
+
             name="최저기온",
+
             line=dict(
                 color="#007BFF",
                 width=3
             ),
+
             marker=dict(
                 color="#007BFF",
-                size=8
+                size=7
             ),
-            connectgaps=False
+
+            connectgaps=False,
+
+            hovertemplate=
+            "연도: %{x}년<br>" +
+            "최저기온: %{y:.1f}℃" +
+            "<extra></extra>"
         )
     )
 
+    # ---------------------------------
     # 그래프 디자인
+    # ---------------------------------
+
+    # 10년 간격으로 연도 표시
+    year_ticks = list(
+        range(1907, 2027, 10)
+    )
+
+    # 마지막 연도 2026년 추가
+    if 2026 not in year_ticks:
+        year_ticks.append(2026)
+
     fig.update_layout(
+
+        # 그래프 제목
         title=dict(
             text="월별 기온분석",
             x=0.5,
             xanchor="center",
-            font=dict(size=25)
+            font=dict(
+                size=25
+            )
         ),
 
+        # 가로축
         xaxis=dict(
             title="연도",
-            tickmode="linear",
-            dtick=1
+
+            range=[1907, 2026],
+
+            tickmode="array",
+
+            tickvals=year_ticks,
+
+            ticktext=[
+                f"{year}년"
+                for year in year_ticks
+            ],
+
+            showgrid=True
         ),
 
+        # 세로축
         yaxis=dict(
             title="온도(℃)",
+            showgrid=True,
             zeroline=True
         ),
 
+        # 범례
         legend=dict(
             title="기온 구분",
+
             orientation="h",
+
             yanchor="bottom",
             y=1.02,
+
             xanchor="center",
             x=0.5
         ),
 
+        # 마우스 올리면 기온 표시
         hovermode="x unified",
 
+        # 그래프 배경
         template="plotly_white",
 
-        height=550
+        # 그래프 크기
+        height=550,
+
+        # 여백
+        margin=dict(
+            l=60,
+            r=30,
+            t=100,
+            b=60
+        )
     )
 
     # 그래프 출력
@@ -272,13 +380,15 @@ else:
     )
 
 
-# ---------------------------------
-# 7. 분석 결과 표
-# ---------------------------------
+# =====================================
+# 8. 연도별 기온 데이터 표
+# =====================================
 
 with st.expander("📊 연도별 기온 데이터 확인"):
 
-    display_df = result.rename(
+    display_df = result.copy()
+
+    display_df = display_df.rename(
         columns={
             "연도": "연도",
             "최고기온(℃)": "최고기온(℃)",
@@ -293,16 +403,37 @@ with st.expander("📊 연도별 기온 데이터 확인"):
     )
 
 
-# ---------------------------------
-# 8. 데이터 정보
-# ---------------------------------
+# =====================================
+# 9. 데이터 분석 정보
+# =====================================
+
+st.divider()
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(
+        "선택한 월",
+        month_names[selected_month]
+    )
+
+with col2:
+    st.metric(
+        "분석 연도 수",
+        f"{len(result)}개"
+    )
+
+with col3:
+    st.metric(
+        "분석 기간",
+        "1907~2026년"
+    )
 
 st.caption(
-    f"선택 월: {month_names[selected_month]} | "
-    f"분석 연도 수: {len(result)}개"
+    "※ 분석 범위는 1907년부터 2026년까지입니다."
 )
 
 st.caption(
-    "※ 동일한 연도·월에 여러 기록이 있는 경우 "
-    "기온의 평균값을 사용합니다."
+    "※ 동일한 연도와 월에 여러 기록이 있는 경우 "
+    "평균값을 사용합니다."
 )
