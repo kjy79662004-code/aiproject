@@ -144,4 +144,157 @@ target_sugar = st.sidebar.slider(
 )
 target_protein = st.sidebar.slider(
     "단백질 (g)",
-    min_value=float(df[col_protein].\
+    min_value=float(df[col_protein].min()),
+    max_value=float(df[col_protein].max()),
+    value=float(df[col_protein].median()),
+    step=1.0,
+)
+target_fat = st.sidebar.slider(
+    "지방 (g)",
+    min_value=float(df[col_fat].min()),
+    max_value=float(df[col_fat].max()),
+    value=float(df[col_fat].median()),
+    step=1.0,
+)
+
+# 3. 조건과 가장 가까운 디저트 1개 + 일반 조리품 1개 검색
+scaler = StandardScaler()
+scaled_features = scaler.fit_transform(df[feature_cols])
+target_scaled = scaler.transform(
+    [[target_cal, target_sugar, target_protein, target_fat]]
+)
+
+df["거리점수"] = np.linalg.norm(scaled_features - target_scaled, axis=1)
+
+dessert_df = df[df["구분"] == "디저트"].sort_values("거리점수")
+food_df = df[df["구분"] == "조리품"].sort_values("거리점수")
+
+selected_rows = []
+if not dessert_df.empty:
+    selected_rows.append(dessert_df.iloc[0])
+if not food_df.empty:
+    selected_rows.append(food_df.iloc[0])
+
+result_df = pd.DataFrame(selected_rows).reset_index(drop=True)
+
+display_df = pd.DataFrame({
+    "구분": result_df["구분"],
+    "메뉴명": result_df[col_name],
+    "열량 (kcal)": result_df[col_cal].round(1),
+    "당류 (g)": result_df[col_sugar].round(1),
+    "단백질 (g)": result_df[col_protein].round(1),
+    "지방 (g)": result_df[col_fat].round(1),
+})
+
+# 4. 결과 표 출력 (디저트 상단 고정 + 하늘색/분홍색 스타일링)
+st.subheader("📋 추천 메뉴 결과 (디저트 상단 우선 표시)")
+st.caption(
+    "🟦 하늘색 행: 디저트류 (예외 구분) / 🩷 분홍색 행: 일반 조리품(음식)"
+)
+
+
+def highlight_category(row):
+    if row["구분"] == "디저트":
+        return ["background-color: #D6EAF8; color: #1B4F72; font-weight: bold;"] * len(row)
+    else:
+        return ["background-color: #FADBD8; color: #78281F; font-weight: bold;"] * len(row)
+
+
+styled_table = display_df.style.apply(highlight_category, axis=1).format({
+    "열량 (kcal)": "{:.1f}",
+    "당류 (g)": "{:.1f}",
+    "단백질 (g)": "{:.1f}",
+    "지방 (g)": "{:.1f}",
+})
+
+st.dataframe(styled_table, use_container_width=True, hide_index=True)
+
+# 5. 막대 그래프 및 그래프 요약 표
+st.divider()
+st.subheader("📊 추천 메뉴 영양 성분 비교 (막대 그래프 & 요약 표)")
+
+col1, col2 = st.columns([3, 2])
+
+with col1:
+    st.markdown("**1) 영양 성분 비교 막대 그래프**")
+    chart_df = display_df.set_index("메뉴명")[
+        ["열량 (kcal)", "당류 (g)", "단백질 (g)", "지방 (g)"]
+    ]
+    st.bar_chart(chart_df)
+
+with col2:
+    st.markdown("**2) 그래프 데이터 간단 요약 표 (사용자 입력 목표치 대비)**")
+    summary_data = {
+        "영양 항목": ["열량 (kcal)", "당류 (g)", "단백질 (g)", "지방 (g)"],
+        "사용자 설정값": [
+            target_cal,
+            target_sugar,
+            target_protein,
+            target_fat,
+        ],
+    }
+    for _, r in display_df.iterrows():
+        label = f"[{r['구분']}] {r['메뉴명']}"
+        summary_data[label] = [
+            r["열량 (kcal)"],
+            r["당류 (g)"],
+            r["단백질 (g)"],
+            r["지방 (g)"],
+        ]
+
+    summary_table = pd.DataFrame(summary_data)
+    st.table(summary_table)
+
+# 6. 머신러닝 알고리즘 기반 음식 종류 예측 섹션
+st.divider()
+st.subheader("🤖 머신러닝 기반 메뉴 종류 예측 (Random Forest Classifier)")
+
+
+@st.cache_resource
+def train_classifier(data, features):
+    X = data[features]
+    y = data["구분"]
+    if y.nunique() < 2:
+        return None, 0.0
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    clf.fit(X_train, y_train)
+    acc = clf.score(X_test, y_test)
+    return clf, acc
+
+
+clf, accuracy = train_classifier(df, feature_cols)
+
+if clf is not None:
+    user_input_df = pd.DataFrame(
+        [[target_cal, target_sugar, target_protein, target_fat]],
+        columns=feature_cols,
+    )
+    pred_class = clf.predict(user_input_df)[0]
+    pred_proba = clf.predict_proba(user_input_df)[0]
+    classes = list(clf.classes_)
+
+    pred_idx = classes.index(pred_class)
+    confidence = pred_proba[pred_idx] * 100
+
+    m_col1, m_col2 = st.columns(2)
+    m_col1.metric(
+        label="현재 입력 조건의 예측 종류 및 신뢰도",
+        value=f"{pred_class} ({confidence:.1f}%)",
+    )
+    m_col2.metric(
+        label="모델 테스트 정확도", value=f"{accuracy * 100:.1f}%"
+    )
+else:
+    st.info(
+        "데이터셋 내 '디저트'와 '조리품' 두 분류가 모두 존재해야 모델 학습이 가능합니다."
+    )
+
+# 7. 알고리즘 설명 코멘트 (하단 배치)
+st.info("""
+💡 **사용된 알고리즘 설명: 랜덤 포레스트 분류기 (Random Forest Classifier)**
+* **작동 원리**: 여러 개의 결정 트리(Decision Tree)를 무작위로 학습시킨 뒤, 각 트리의 예측 결과를 종합(다수결 투표)하여 최종 종류(`디저트` 또는 `조리품`)를 판별하는 **앙상블(Ensemble) 머신러닝 알고리즘**입니다.
+* **선택 이유**: 영양 성분 데이터는 *'당류와 지방이 높으면 디저트일 확률이 높다'*처럼 변수 간 비선형적인 경계가 뚜렷합니다. 랜덤 포레스트는 단일 결정 트리의 과적합(Overfitting)을 방지하면서도 열량·당류·단백질·지방의 복합적인 조합 패턴을 안정적이고 정확하게 분류해 줍니다.
+""")
